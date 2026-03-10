@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import axios, { AxiosError } from 'axios';
+import { useCompletion } from 'ai/react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { Loader2 } from 'lucide-react';
@@ -27,7 +28,12 @@ import { messageSchema } from '@/schemas/messageSchema';
 const specialChar = '||';
 
 const parseStringMessages = (messageString: string): string[] => {
-  return messageString.split(specialChar);
+  const parsedMessages = messageString
+    .split(specialChar)
+    .map((message) => message.trim())
+    .filter(Boolean);
+  console.log('Parsed suggested messages:', parsedMessages);
+  return parsedMessages;
 };
 
 const initialMessageString =
@@ -40,17 +46,42 @@ export default function SendMessage() {
   const form = useForm<z.infer<typeof messageSchema>>({
     resolver: zodResolver(messageSchema),
   });
+  const {
+    completion,
+    complete,
+    isLoading: isSuggesting,
+  } = useCompletion({
+    api: '/api/suggest-messages',
+  });
 
   const messageContent = form.watch('content');
+  const suggestedMessages = completion
+    ? parseStringMessages(completion)
+    : parseStringMessages(initialMessageString);
 
   const handleMessageClick = (message: string) => {
     form.setValue('content', message);
   };
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+
+  const handleSuggestMessages = async () => {
+    try {
+      console.log('Suggest Messages button clicked');
+      const result = await complete('');
+      console.log('Raw suggestion response:', result);
+    } catch {
+      console.error('Suggest message request failed');
+      toast({
+        title: 'Error',
+        description: 'Failed to fetch suggested messages',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const onSubmit = async (data: z.infer<typeof messageSchema>) => {
-    setIsLoading(true);
+    setIsSending(true);
     try {
       const response = await axios.post<ApiResponse>('/api/send-message', {
         ...data,
@@ -71,7 +102,7 @@ export default function SendMessage() {
         variant: 'destructive',
       });
     } finally {
-      setIsLoading(false);
+      setIsSending(false);
     }
   };
 
@@ -100,13 +131,13 @@ export default function SendMessage() {
             )}
           />
           <div className="flex justify-center">
-            {isLoading ? (
+            {isSending ? (
               <Button disabled>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Please wait
               </Button>
             ) : (
-              <Button type="submit" disabled={isLoading || !messageContent}>
+              <Button type="submit" disabled={isSending || !messageContent}>
                 Send It
               </Button>
             )}
@@ -115,21 +146,40 @@ export default function SendMessage() {
       </Form>
 
       <div className="space-y-4 my-8">
-        <div className="space-y-2">
+        <div className="flex items-center justify-between gap-4">
           <p>Click on any message below to select it.</p>
+          <Button
+            className='bg-black text-white'
+            type="button"
+            variant="outline"
+            onClick={() => void handleSuggestMessages()}
+            disabled={isSuggesting}
+          >
+            {isSuggesting ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Suggesting...
+              </>
+            ) : (
+              'Suggest Messages'
+            )}
+          </Button>
         </div>
         <Card>
           <CardHeader>
-            <h3 className="text-xl font-semibold">Demo Messages</h3>
+            <h3 className="text-xl font-semibold">Suggested Messages</h3>
           </CardHeader>
           <CardContent className="flex flex-col space-y-4">
-            {
-              parseStringMessages(initialMessageString).map((message, index) => (
-                <Button className='bg-gray-100 hover:bg-gray-200 text-black' key={index} onClick={() => handleMessageClick(message)}>
-                  {message}
-                </Button>
-              ))
-            }
+            {suggestedMessages.map((message, index) => (
+              <Button
+                type="button"
+                className="bg-gray-100 text-black hover:bg-gray-200"
+                key={`${message}-${index}`}
+                onClick={() => handleMessageClick(message)}
+              >
+                {message}
+              </Button>
+            ))}
           </CardContent>
         </Card>
       </div>
