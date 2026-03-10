@@ -1,54 +1,74 @@
 import { GoogleGenAI } from '@google/genai';
 import { NextResponse } from 'next/server';
 
-const ai = new GoogleGenAI({});
+const FALLBACK_SUGGESTIONS = [
+  'What is something small that made you smile recently?',
+  'What kind of message would make your day better?',
+  'What is one thing you are looking forward to right now?',
+];
+
+function toSuggestionResponse(messages: string[], source: 'ai' | 'fallback') {
+  return new Response(messages.join('||'), {
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Suggestions-Source': source,
+    },
+  });
+}
 
 export async function POST() {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('GEMINI_API_KEY is missing. Returning fallback suggestions.');
+    return toSuggestionResponse(FALLBACK_SUGGESTIONS, 'fallback');
+  }
+
   try {
-    console.log('POST /api/suggest-messages called');
-
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('GEMINI_API_KEY is missing');
-      return NextResponse.json(
-        { message: 'GEMINI_API_KEY is not configured' },
-        { status: 500 }
-      );
-    }
-
-    const model =  'gemini-3-flash-preview';
-    const prompt =
-      "Create exactly three open-ended, friendly questions for an anonymous social messaging platform. Return them as a single string separated only by '||'. Do not use bullet points, numbering, or extra text. Avoid sensitive or deeply personal topics.";
-
-    console.log('Trying Gemini model:', model);
-
+    const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model,
-      contents: prompt,
-    });
-
-    console.log('Gemini SDK raw response:', JSON.stringify(response));
-
-    const content = response.text?.trim() ?? '';
-    console.log('Gemini suggestion content:', content);
-
-    if (!content) {
-      console.error('Suggest messages returned empty content');
-      return NextResponse.json(
-        { message: 'Failed to generate suggested messages' },
-        { status: 500 }
-      );
-    }
-
-    return new Response(content, {
-      headers: {
-        'Content-Type': 'text/plain; charset=utf-8',
+      model: 'gemini-2.5-flash-lite',
+      contents:
+        "Generate exactly three friendly, open-ended questions for an anonymous social messaging platform. Return only one plain string separated by '||'. No bullets, no numbering, no intro text, and no sensitive topics.",
+      config: {
+        temperature: 0.9,
+        maxOutputTokens: 120,
       },
     });
+
+    const content = response.text?.trim();
+    if (!content) {
+      console.error('Gemini returned empty content. Using fallback suggestions.');
+      return toSuggestionResponse(FALLBACK_SUGGESTIONS, 'fallback');
+    }
+
+    const normalized = content
+      .split('||')
+      .map((message) => message.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (normalized.length !== 3) {
+      console.error('Gemini returned invalid suggestion format. Using fallback.', {
+        content,
+      });
+      return toSuggestionResponse(FALLBACK_SUGGESTIONS, 'fallback');
+    }
+
+    return toSuggestionResponse(normalized, 'ai');
   } catch (error) {
-    console.error('Unexpected error in suggest-messages:', error);
-    return NextResponse.json(
-      { message: 'An unexpected error occurred' },
-      { status: 500 }
-    );
+    const providerError = error as {
+      status?: number;
+      code?: number | string;
+      message?: string;
+    };
+
+    console.error('Suggest messages provider error:', {
+      status: providerError.status,
+      code: providerError.code,
+      message: providerError.message,
+    });
+
+    return toSuggestionResponse(FALLBACK_SUGGESTIONS, 'fallback');
   }
 }
