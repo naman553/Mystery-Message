@@ -1,4 +1,5 @@
-import { resend } from "@/lib/resend";
+import { render } from "@react-email/render";
+import { getMailerConfigError, mailer } from "@/lib/mailer";
 import VerificationEmail from "../../emails/VerificationEmail";
 import { ApiResponse } from "@/types/ApiResponse";
 
@@ -8,12 +9,24 @@ export async function sendVerificationEmail(
     verifyCode: string
 ): Promise<ApiResponse> {
     try {
-        await resend.emails.send({
-            from: 'Acme <onboarding@resend.dev>',
+        const configError = getMailerConfigError();
+        if (configError) {
+            return { success: false, message: configError };
+        }
+
+        const from = process.env.MAIL_FROM ?? process.env.SMTP_USER;
+
+        const html = await render(
+            VerificationEmail({ username, otp: verifyCode })
+        );
+
+        await mailer.sendMail({
+            from,
             to: email,
             subject: 'Mystry Message | Verification code',
-            react: VerificationEmail({username, otp: verifyCode}),
-        })
+            html,
+        });
+
         return { success: true, message: 'Successfully sent verification email' }
     } catch (emailError) {
         console.error("Error sending verification email", emailError);
